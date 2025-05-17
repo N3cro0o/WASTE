@@ -2,7 +2,9 @@
 #include <string>
 #include <format>
 
-#define VERSION "0.1"
+#define FILE_FORMAT std::string
+
+const char* VERSION = "0.2";
 
 enum class State {
 	Raw,
@@ -14,15 +16,19 @@ enum class State {
 bool print_debug_strings = false;
 
 // State variables
+int row, col;
+int cmd_col;
 State curr_state = State::Cooked;
 const std::string ALL_COMMANDS[] = {
 		"edit",
-		"quit"
+		"quit",
+		"debug_break"
 };
-const int MAX_COMMANDS = 2;
+const int MAX_COMMANDS = 3;
 
 // Data varibles
-std::string file_data = "";
+std::string err_string = "Write next command";
+FILE_FORMAT file_data = "";
 
 void print_line(std::string s, bool debug = false) {
 	if (debug) {
@@ -38,6 +44,19 @@ void print_line(std::string s, bool debug = false) {
 void print_line(int y, int x, std::string s, bool debug = false) {
 	move(y, x);
 	print_line(s, debug);
+}
+
+void wprint_all_data(WINDOW* wind, FILE_FORMAT data, bool clear = false) {
+	if (clear) {
+		for (int i = 4; i < LINES; i++) {
+			move(i, 0);
+			for (int j = 0; j < COLS; j++)
+				waddch(stdscr, ' ');
+		}
+		wrefresh(stdscr);
+		move(4, 0);
+	}
+	waddstr(wind, data.data());
 }
 
 int check_command(char* input) {
@@ -60,25 +79,206 @@ void handle_command(char* input) {
 	switch (check_command(input)) {
 	case 0:
 		curr_state = State::Raw;
+		err_string = "Entering text editor (raw) mode";
 		raw();
 		noecho();
 		break;
 	case 1:
 		// Quit
 		curr_state = State::Quit;
+		err_string = "Quitting...";
+		break;
+	case 2:
+		// Debug break
+		1 == 1;
 		break;
 	default:
-		// Print error message
+		err_string = "Command does not exist";
 		break;
 	}
 
 	return;
 }
 
+// FILE_FORMAT functions
+bool raw_handle_arrows(int ch) {
+	// Get pos
+	int y = getcury(stdscr);
+	int x = getcurx(stdscr);
+	// Check if first column
+	if ((y == 4 && x == 0 && ch == KEY_LEFT) || (y == 4 && ch == KEY_UP))
+		return true;
+	// Arrows
+	if (ch == KEY_LEFT) {
+		// Check if first column
+		if (x == 0) {
+			int y_start = y;
+			y -= 5;
+			for (int i = 0; i < file_data.size(); i++) {
+				// Find end line
+				if (file_data[i] == '\n') {
+					// Check if line number is smaller than 0. If not, decrease by one
+					if (--y < 0)
+						break;
+					// Reset x
+					x = 0;
+				}
+				else
+					// Increase x by one
+					x++;
+			}
+			move(y_start - 1, x);
+			return 1;
+		}
+		move(y, x - 1);
+	}
+	else if (ch == KEY_RIGHT) {
+		// Check if can move; look for characters in data string
+		bool character_check = false;
+		int i_pos = 0;
+		int n_counter = 0;
+		for (int i = 0; i < file_data.size(); i++) {
+			int debug_cha = file_data[i];
+			if (n_counter == y - 4 && x <= (i - i_pos)) {
+				if (debug_cha != '\n')
+					character_check = true;
+			}
+			if (file_data[i] == '\n') {
+				i_pos = i + 1;
+				n_counter++;
+			}
+		}
+		if (character_check)
+			move(y, x + 1);
+		else {
+			if (n_counter > y - 4)
+				move(y + 1, 0);
+			else
+				move(y, x);
+		}
+		wrefresh(stdscr);
+	}
+	else if (ch == KEY_UP) {
+		move(y - 1, x);
+	}
+	else if (ch == KEY_DOWN) {
+		int n_counter = 0;
+		for (int i = 0; i < file_data.size(); i++) {
+			if (file_data[i] == '\n')
+				n_counter++;
+		}
+		if (n_counter > y - 4)
+			move(y + 1, x);
+	}
+	else
+		return false;
+	return true;
+}
+
+bool raw_handle_backspace(int ch) {
+	if (ch != '\b')
+		return false;
+	// Get curses pos
+	int y = getcury(stdscr);
+	int x = getcurx(stdscr);
+	// Error handling
+	if (y == 4 && x == 0)
+		return true;
+	if (file_data.empty()) {
+		err_string = "Data file is empty!";
+		return true;
+	}
+	// FILE_FORMAT erase
+	int i_target = file_data.size();
+	int i_pos = 0;
+	int n_counter = 0;
+	for (int i = 0; i < file_data.size(); i++) {
+		int debug_cha = file_data[i];
+		if (n_counter == y - 4 && x <= (i - i_pos)) {
+			i_target = i;
+			break;
+		}
+		if (file_data[i] == '\n') {
+			i_pos = i + 1;
+			n_counter++;
+		}
+	}
+	file_data.erase(file_data.begin() + i_target - 1);
+	// Curses erase
+	if (x == 0) {
+		for (int i = col - 1; i >= 0; i--) {
+			wmove(stdscr, y - 1, i);
+			wrefresh(stdscr);
+			if (winch(stdscr) != 0 && winch(stdscr) != ' ') {
+				wmove(stdscr, y - 1, i + 1);
+				break;
+			}
+		}
+		wprint_all_data(stdscr, file_data, true);
+		return true;
+	}
+	// Backspace
+	move(y, COLS);
+	ch = ' ';
+	int mem_ch = 0;
+	for (int i = COLS - 1; i >= x - 1; i--) {
+		move(y, i);
+		mem_ch = winch(stdscr);
+		waddch(stdscr, ch);
+		ch = mem_ch;
+	}
+	move(y, x - 1);
+	/*mvwaddch(stdscr, y, x - 1, ' ');
+	move(y, x - 1);
+	wrefresh(stdscr);
+	file_data.pop_back();*/
+	return true;
+}
+
+void handle_raw_add_char(FILE_FORMAT* data, int ch) {
+	int y = getcury(stdscr);
+	int x = getcurx(stdscr);
+	/*
+	* Curses
+		 - Store cur pos
+		 - Move all characters on screen to the left
+		 - Go back and place char
+	* FILE_FORMAT
+		 - Get position in data
+		 - Insert char
+	*/
+	// FILE_FORMAT
+	int i_target = data->size();
+	int i_pos = 0;
+	int n_counter = 0;
+	for (int i = 0; i < data->size(); i++) {
+		int debug_cha = data->at(i);
+		if (n_counter == y - 4 && x <= (i - i_pos)) {
+			i_target = i;
+			break;
+		}
+		if (file_data[i] == '\n') {
+			i_pos = i + 1;
+			n_counter++;
+		}
+	}
+	data->insert(data->begin() + i_target, ch);
+	// Curses
+	int last_ch = winch(stdscr);
+	int mem_ch = 0;
+	for (int i = x + 1; i < COLS; i++) {
+		move(y, i);
+		mem_ch = winch(stdscr);
+		waddch(stdscr, last_ch);
+		last_ch = mem_ch;
+	}
+	move(y, x);
+	waddch(stdscr, ch);
+	wrefresh(stdscr);
+}
+
 int main()
 {
-	int row, col;
-	int cmd_col;
 	WINDOW* menu_window;
 	// Initialize curses
 	initscr();
@@ -90,10 +290,17 @@ int main()
 	init_pair(0, COLOR_WHITE, COLOR_BLACK);
 	// Window size
 	getmaxyx(stdscr, row, col);
-	if (print_debug_strings)
-		print_line("Initialization\n", true);
+	// Tests
+	if (print_debug_strings) {
+		print_line("String test\n", true);
+		file_data.insert(file_data.begin(), 'A');
+		file_data.insert(file_data.begin() + 1, 'B');
+		file_data.insert(file_data.begin(), 'C');
+
+		print_line(0, 0, "Initialization end\n", true);
+	}
 	// Create menu window
-	menu_window = newwin(3, col, 0, 0);
+	menu_window = newwin(4, col, 0, 0);
 	box(menu_window, 0, 0);
 	mvwprintw(menu_window, 1, 1, "WASTE v.%s | Current state: %s | Command: ", VERSION, curr_state == State::Raw ? "Raw" : "Ckd");
 	cmd_col = getcurx(menu_window);
@@ -103,12 +310,13 @@ int main()
 		//wclear(stdscr); // IDK about this one
 		wclear(menu_window);
 		// Print output below the window
-		move(3, 0);
-		addstr(file_data.c_str());
+		move(4, 0);
+		wprint_all_data(stdscr, file_data);
 		wrefresh(stdscr);
 		if (curr_state == State::Cooked) {
 			// Menu
 			box(menu_window, 0, 0);
+			mvwprintw(menu_window, 2, 1, "INFO: %s", err_string.data());
 			mvwprintw(menu_window, 1, 1, "WASTE v.%s | Current state: %s | Command: ", VERSION, curr_state == State::Raw ? "Raw" : "Ckd");
 			wrefresh(menu_window);
 			// Get commands
@@ -119,10 +327,11 @@ int main()
 		else if (curr_state == State::Raw) {
 			// Print how to exit
 			box(menu_window, 0, 0);
+			mvwprintw(menu_window, 2, 1, "INFO: %s", err_string.data());
 			mvwprintw(menu_window, 1, 1, "WASTE v.%s | Current state: %s | To exit RAW state, press F1", VERSION, curr_state == State::Raw ? "Raw" : "Ckd");
 			wrefresh(menu_window);
 			// Set up raw
-			move(3, 0);
+			move(4, 0);
 			int y, x;
 			while (1) {
 				// Get char
@@ -135,43 +344,29 @@ int main()
 				// Get char
 				int ch = 0;
 				ch = wgetch(stdscr);
-				// Arrows
-				if (ch == KEY_LEFT) {
-					move(y, x - 1);
+				if (raw_handle_arrows(ch))
 					continue;
-				}
-				else if (ch == KEY_RIGHT) {
-					move(y, x + 1);
-					continue;
-				}
-				else if (ch == KEY_UP) {
-					move(y - 1, x);
-					continue;
-				}
-				else if (ch == KEY_DOWN) {
-					move(y + 1, x);
-					continue;
-				}
 				// Handle special characters
 				if (ch == KEY_F(1))
 					break;
-				if (ch == '\b') { // Backspace
-					mvwaddch(stdscr, y, x - 1, ' ');
-					move(y, x - 1);
-					wrefresh(stdscr);
+				if (raw_handle_backspace(ch))
 					continue;
-				}
 				if (ch == '\r') {
+					//move(y + 1, 0);
+
+					/*wprintw(stdscr, "\n");
+					file_data.push_back('\n');*/
+					handle_raw_add_char(&file_data, '\n');
+					wprint_all_data(stdscr, file_data, true);
 					move(y + 1, 0);
-					wrefresh(stdscr);
 					continue;
 				}
 				// Add char
-				wprintw(stdscr, "%c", ch);
-				wrefresh(stdscr);
+				handle_raw_add_char(&file_data, ch);
 			}
 			noraw();
 			echo();
+			err_string = "Write next command";
 			curr_state = State::Cooked;
 		}
 	}
