@@ -7,7 +7,7 @@
 
 #define FILE_FORMAT std::string
 
-const char* VERSION = "1.0";
+const char* VERSION = "1.0.1";
 
 enum class State {
 	Raw,
@@ -16,7 +16,7 @@ enum class State {
 };
 
 // Regex
-std::regex IOregex("^(\\w|_)+\\.\\w+");
+std::regex IOregex("(\\w|_)+\\.\\w+");
 
 // Debug variables
 bool print_debug_strings = false;
