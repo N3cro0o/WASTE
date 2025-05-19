@@ -33,4 +33,7 @@
   <ItemGroup>
     <Library Include="pdcurses.lib" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+  </ItemGroup>
 </Project>
